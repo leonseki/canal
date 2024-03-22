@@ -32,12 +32,12 @@ import com.alibaba.otter.canal.store.model.Event;
 public class EntryEventSink extends AbstractCanalEventSink<List<CanalEntry.Entry>> implements CanalEventSink<List<CanalEntry.Entry>> {
 
     private static final Logger    logger                        = LoggerFactory.getLogger(EntryEventSink.class);
-    private static final int       maxFullTimes                  = 10;
+    private static final int       MAX_FULL_TIMES                = 10;
     private CanalEventStore<Event> eventStore;
     protected boolean              filterTransactionEntry        = false;                                        // 是否需要尽可能过滤事务头/尾
-    protected boolean              filterEmtryTransactionEntry   = true;                                         // 是否需要过滤空的事务头/尾
-    protected long                 emptyTransactionInterval      = 5 * 1000;                                     // 空的事务输出的频率
-    protected long                 emptyTransctionThresold       = 8192;                                         // 超过8192个事务头，输出一个
+    protected boolean              filterEmptyTransactionEntry   = true;                                         // 是否需要过滤空的事务头/尾
+    protected long                 emptyTransactionInterval      = 5L * 1000;                                     // 空的事务输出的频率
+    protected long                 emptyTransactionThreshold     = 8192;                                         // 超过8192个事务头，输出一个
 
     protected volatile long        lastTransactionTimestamp      = 0L;
     protected AtomicLong           lastTransactionCount          = new AtomicLong(0L);
@@ -50,6 +50,7 @@ public class EntryEventSink extends AbstractCanalEventSink<List<CanalEntry.Entry
         addHandler(new HeartBeatEntryEventHandler());
     }
 
+    @Override
     public void start() {
         super.start();
         Assert.notNull(eventStore);
@@ -88,19 +89,20 @@ public class EntryEventSink extends AbstractCanalEventSink<List<CanalEntry.Entry
 
     private boolean sinkData(List<CanalEntry.Entry> entrys, InetSocketAddress remoteAddress)
                                                                                             throws InterruptedException {
+
         boolean hasRowData = false;
         boolean hasHeartBeat = false;
         List<Event> events = new ArrayList<>();
         for (CanalEntry.Entry entry : entrys) {
+            logger.info(entry.toString());
             if (!doFilter(entry)) {
                 continue;
             }
-
             if (filterTransactionEntry
                 && (entry.getEntryType() == EntryType.TRANSACTIONBEGIN || entry.getEntryType() == EntryType.TRANSACTIONEND)) {
                 long currentTimestamp = entry.getHeader().getExecuteTime();
                 // 基于一定的策略控制，放过空的事务头和尾，便于及时更新数据库位点，表明工作正常
-                if (lastTransactionCount.incrementAndGet() <= emptyTransctionThresold
+                if (lastTransactionCount.incrementAndGet() <= emptyTransactionThreshold
                     && Math.abs(currentTimestamp - lastTransactionTimestamp) <= emptyTransactionInterval) {
                     continue;
                 } else {
@@ -124,11 +126,11 @@ public class EntryEventSink extends AbstractCanalEventSink<List<CanalEntry.Entry
             return doSink(events);
         } else {
             // 需要过滤的数据
-            if (filterEmtryTransactionEntry && !CollectionUtils.isEmpty(events)) {
+            if (filterEmptyTransactionEntry && !CollectionUtils.isEmpty(events)) {
                 long currentTimestamp = events.get(0).getExecuteTime();
                 // 基于一定的策略控制，放过空的事务头和尾，便于及时更新数据库位点，表明工作正常
                 if (Math.abs(currentTimestamp - lastEmptyTransactionTimestamp) > emptyTransactionInterval
-                    || lastEmptyTransactionCount.incrementAndGet() > emptyTransctionThresold) {
+                    || lastEmptyTransactionCount.incrementAndGet() > emptyTransactionThreshold) {
                     lastEmptyTransactionCount.set(0L);
                     lastEmptyTransactionTimestamp = currentTimestamp;
                     return doSink(events);
@@ -143,7 +145,7 @@ public class EntryEventSink extends AbstractCanalEventSink<List<CanalEntry.Entry
     protected boolean doFilter(CanalEntry.Entry entry) {
         if (filter != null && entry.getEntryType() == EntryType.ROWDATA) {
             String name = getSchemaNameAndTableName(entry);
-            boolean need = filter.filter(name);
+            boolean need = filter.filter(entry);
             if (!need) {
                 logger.debug("filter name[{}] entry : {}:{}",
                     name,
@@ -194,7 +196,7 @@ public class EntryEventSink extends AbstractCanalEventSink<List<CanalEntry.Entry
 
     // 处理无数据的情况，避免空循环挂死
     private void applyWait(int fullTimes) {
-        int newFullTimes = fullTimes > maxFullTimes ? maxFullTimes : fullTimes;
+        int newFullTimes = Math.min(fullTimes, MAX_FULL_TIMES);
         if (fullTimes <= 3) { // 3次以内
             Thread.yield();
         } else { // 超过3次，最多只sleep 10ms
@@ -215,16 +217,16 @@ public class EntryEventSink extends AbstractCanalEventSink<List<CanalEntry.Entry
         this.filterTransactionEntry = filterTransactionEntry;
     }
 
-    public void setFilterEmtryTransactionEntry(boolean filterEmtryTransactionEntry) {
-        this.filterEmtryTransactionEntry = filterEmtryTransactionEntry;
+    public void setFilterEmptyTransactionEntry(boolean filterEmptyTransactionEntry) {
+        this.filterEmptyTransactionEntry = filterEmptyTransactionEntry;
     }
 
     public void setEmptyTransactionInterval(long emptyTransactionInterval) {
         this.emptyTransactionInterval = emptyTransactionInterval;
     }
 
-    public void setEmptyTransctionThresold(long emptyTransctionThresold) {
-        this.emptyTransctionThresold = emptyTransctionThresold;
+    public void setEmptyTransactionThreshold(long emptyTransactionThreshold) {
+        this.emptyTransactionThreshold = emptyTransactionThreshold;
     }
 
     public AtomicLong getEventsSinkBlockingTime() {

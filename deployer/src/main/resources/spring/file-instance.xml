@@ -50,9 +50,22 @@
 		<property name="raw" value="${canal.instance.memory.rawEntry:true}" />
 	</bean>
 
+	<bean id="eventTypeFilterStrategy" class="com.alibaba.otter.canal.filter.strategy.EventTypeFilterStrategy"/>
+	<bean id="tableNameFilterStrategy" class="com.alibaba.otter.canal.filter.strategy.TableNameFilterStrategy"/>
+
+	<bean id="aviaterCommonFilter" class="com.alibaba.otter.canal.filter.aviater.AviaterCommonFilter">
+		<constructor-arg index="0">
+			<list>
+				<ref bean="eventTypeFilterStrategy"/>
+				<ref bean="tableNameFilterStrategy"/>
+			</list>
+		</constructor-arg>
+	</bean>
+
 	<bean id="eventSink" class="com.alibaba.otter.canal.sink.entry.EntryEventSink">
 		<property name="eventStore" ref="eventStore" />
 		<property name="filterTransactionEntry" value="${canal.instance.filter.transaction.entry:false}"/>
+		<property name="filter" ref="aviaterCommonFilter"/>
 	</bean>
 
 	<bean id="eventParser" parent="baseEventParser">
